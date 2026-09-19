@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Composio Tool Dependency Graph</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.30.2/cytoscape.min.js"></script>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0f1117; color: #e6e6e6; }
+  #app { display: flex; flex-direction: column; height: 100%; }
+  header { padding: 10px 14px; background: #161923; border-bottom: 1px solid #262a38; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; color: #fff; white-space: nowrap; }
+  #search { flex: 1; min-width: 200px; padding: 6px 10px; border-radius: 6px; border: 1px solid #333; background: #0f1117; color: #eee; font-size: 13px; }
+  #stats { font-size: 12px; color: #9aa0ac; white-space: nowrap; }
+  button { padding: 6px 10px; border-radius: 6px; border: 1px solid #333; background: #1d2130; color: #ddd; font-size: 12px; cursor: pointer; }
+  button:hover { background: #262a38; }
+  main { flex: 1; display: flex; min-height: 0; }
+  #cy { position: absolute; inset: 0; }
+  #sidebar { width: 300px; border-left: 1px solid #262a38; background: #12141c; padding: 12px; overflow-y: auto; font-size: 12px; }
+  #sidebar h2 { font-size: 13px; margin: 0 0 8px; color: #fff; }
+  #sidebar .empty { color: #777; }
+  .node-detail .slug { font-weight: 600; color: #fff; word-break: break-all; margin-bottom: 4px; }
+  .node-detail .service-tag { display: inline-block; padding: 2px 6px; border-radius: 4px; background: #262a38; margin-bottom: 10px; font-size: 11px; }
+  .edge-list-title { margin-top: 10px; color: #9aa0ac; text-transform: uppercase; font-size: 10px; letter-spacing: 0.05em; }
+  .edge-item { padding: 5px 6px; border-radius: 4px; margin: 3px 0; background: #1a1d29; cursor: pointer; word-break: break-all; }
+  .edge-item:hover { background: #232838; }
+  .edge-item .label { color: #6fb3ff; font-size: 10px; }
+  #legend { position: absolute; left: 14px; bottom: 14px; background: rgba(18,20,28,0.9); border: 1px solid #262a38; border-radius: 8px; padding: 8px 10px; font-size: 11px; max-height: 220px; overflow-y: auto; max-width: 220px; }
+  #legend div { display: flex; align-items: center; gap: 6px; margin: 2px 0; cursor: pointer; }
+  #legend .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  #cyWrap { position: relative; flex: 1; min-width: 0; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>Composio GitHub &mdash; Tool Dependency Graph</h1>
+    <input id="search" placeholder="Search tool slug (e.g. GITHUB_MERGE_A_PULL_REQUEST)…" />
+    <button id="resetBtn">Reset view</button>
+    <span id="stats"></span>
+  </header>
+  <main>
+    <div id="cyWrap">
+      <div id="cy"></div>
+      <div id="legend"></div>
+    </div>
+    <div id="sidebar">
+      <h2>Selected tool</h2>
+      <div id="detail" class="empty">Click a node to inspect its precursors (in-edges) and dependents (out-edges).</div>
+    </div>
+  </main>
+</div>
+<script>
+const GRAPH = __GRAPH_DATA__;
+
+const services = [...new Set(GRAPH.nodes.map(n => n.service || "general"))].sort();
+const palette = ["#e6614b","#4bb3e6","#7be64b","#e6c14b","#b34be6","#4be6a0","#e64bbf","#4b74e6","#e6924b","#8be64b","#4be6de","#e64b6b","#a0e64b","#4b8be6","#e64be0"];
+const colorOf = s => palette[services.indexOf(s) % palette.length];
+
+const elements = [
+  ...GRAPH.nodes.map(n => ({ data: { id: n.id, service: n.service || "general", label: n.id } })),
+  ...GRAPH.edges.map((e, i) => ({ data: { id: "e" + i, source: e.from, target: e.to, label: e.label || "" } })),
+];
+
+const cy = cytoscape({
+  container: document.getElementById("cy"),
+  elements,
+  style: [
+    { selector: "node", style: {
+      "background-color": ele => colorOf(ele.data("service")),
+      "width": 9, "height": 9,
+      "label": "",
+      "border-width": 0,
+    }},
+    { selector: "edge", style: {
+      "width": 0.6,
+      "line-color": "#3a3f52",
+      "target-arrow-color": "#3a3f52",
+      "target-arrow-shape": "triangle",
+      "arrow-scale": 0.6,
+      "curve-style": "bezier",
+      "opacity": 0.35,
+    }},
+    { selector: ".dimmed", style: { "opacity": 0.05 } },
+    { selector: ".highlighted", style: { "opacity": 1 } },
+    { selector: "node.highlighted", style: {
+      "label": "data(label)",
+      "font-size": 8,
+      "color": "#fff",
+      "text-outline-width": 2,
+      "text-outline-color": "#0f1117",
+      "width": 16, "height": 16,
+      "border-width": 2, "border-color": "#fff",
+      "z-index": 999,
+    }},
+    { selector: "node.selectedNode", style: {
+      "background-color": "#ffffff",
+      "width": 20, "height": 20,
+      "border-width": 3, "border-color": "#ffde59",
+      "label": "data(label)",
+      "font-size": 9,
+      "color": "#fff",
+      "text-outline-width": 2,
+      "text-outline-color": "#0f1117",
+      "z-index": 1000,
+    }},
+    { selector: "edge.highlighted", style: { "width": 1.6, "line-color": "#6fb3ff", "target-arrow-color": "#6fb3ff", "label": "data(label)", "font-size": 7, "color": "#9fd3ff", "text-background-color": "#0f1117", "text-background-opacity": 0.8, "text-background-padding": 1 }},
+  ],
+  layout: { name: "cose", animate: false, nodeRepulsion: 8000, idealEdgeLength: 60, numIter: 800, randomize: true },
+  wheelSensitivity: 0.25,
+});
+
+document.getElementById("stats").textContent = `${GRAPH.nodes.length} tools · ${GRAPH.edges.length} dependency edges · ${services.length} services`;
+
+const legend = document.getElementById("legend");
+services.forEach(s => {
+  const row = document.createElement("div");
+  row.innerHTML = `<span class="dot" style="background:${colorOf(s)}"></span><span>${s} (${GRAPH.nodes.filter(n => (n.service||"general")===s).length})</span>`;
+  row.onclick = () => filterByService(s);
+  legend.appendChild(row);
+});
+
+function clearHighlight() {
+  cy.elements().removeClass("highlighted dimmed selectedNode");
+}
+
+function focusNode(id) {
+  clearHighlight();
+  const node = cy.getElementById(id);
+  if (!node || node.empty()) return;
+  const neighborhood = node.closedNeighborhood();
+  cy.elements().addClass("dimmed");
+  neighborhood.removeClass("dimmed").addClass("highlighted");
+  node.removeClass("highlighted").addClass("selectedNode");
+  cy.animate({ fit: { eles: neighborhood, padding: 60 } }, { duration: 300 });
+  renderDetail(id);
+}
+
+function renderDetail(id) {
+  const node = cy.getElementById(id);
+  const incoming = node.incomers("edge").map(e => ({ label: e.data("label"), from: e.data("source") }));
+  const outgoing = node.outgoers("edge").map(e => ({ label: e.data("label"), to: e.data("target") }));
+  const service = node.data("service");
+  const html = [
+    `<div class="node-detail">`,
+    `<div class="slug">${id}</div>`,
+    `<span class="service-tag">${service}</span>`,
+    `<div class="edge-list-title">Precursors — supplies input (${incoming.length})</div>`,
+    incoming.length ? incoming.map(e => `<div class="edge-item" onclick="focusNode('${e.from}')">${e.from}<br/><span class="label">→ ${e.label}</span></div>`).join("") : `<div class="empty">none found</div>`,
+    `<div class="edge-list-title">Depends on this for (${outgoing.length})</div>`,
+    outgoing.length ? outgoing.map(e => `<div class="edge-item" onclick="focusNode('${e.to}')">${e.to}<br/><span class="label">← ${e.label}</span></div>`).join("") : `<div class="empty">none found</div>`,
+    `</div>`,
+  ].join("");
+  document.getElementById("detail").innerHTML = html;
+  document.getElementById("detail").className = "";
+}
+
+cy.on("tap", "node", evt => focusNode(evt.target.id()));
+cy.on("tap", evt => { if (evt.target === cy) { clearHighlight(); document.getElementById("detail").innerHTML = "Click a node to inspect its precursors (in-edges) and dependents (out-edges)."; document.getElementById("detail").className = "empty"; } });
+
+function filterByService(service) {
+  clearHighlight();
+  const nodes = cy.nodes(`[service = "${service}"]`);
+  cy.elements().addClass("dimmed");
+  nodes.removeClass("dimmed").addClass("highlighted");
+  cy.animate({ fit: { eles: nodes, padding: 60 } }, { duration: 300 });
+}
+
+document.getElementById("search").addEventListener("input", e => {
+  const q = e.target.value.trim().toUpperCase();
+  if (!q) { clearHighlight(); return; }
+  const matches = cy.nodes().filter(n => n.id().includes(q));
+  if (matches.length === 1) { focusNode(matches[0].id()); return; }
+  clearHighlight();
+  cy.elements().addClass("dimmed");
+  matches.removeClass("dimmed").addClass("highlighted");
+  if (matches.length) cy.animate({ fit: { eles: matches, padding: 60 } }, { duration: 300 });
+});
+
+document.getElementById("resetBtn").addEventListener("click", () => {
+  clearHighlight();
+  document.getElementById("search").value = "";
+  cy.animate({ fit: { padding: 30 } }, { duration: 300 });
+});
+</script>
+</body>
+</html>

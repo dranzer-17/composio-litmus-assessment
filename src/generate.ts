@@ -155,6 +155,12 @@ interface FieldOrigin {
   defTitle: string;
   defTokens: Set<string>;
   isArrayItem: boolean;
+  // How many objects deep this field is nested from the tool's top-level response
+  // (0 = the response's main payload object). A field nested several levels down
+  // via a shared sub-schema (e.g. an Enterprise object incidentally embedded deep
+  // inside an Issue response) is a much weaker signal of intent than one on the
+  // tool's own primary resource.
+  depth: number;
 }
 
 /** fieldName (lowercase) -> producers that expose that field somewhere in their output */
@@ -201,7 +207,7 @@ function flattenOutputFields(toolSlug: string, outputSchema: JSONSchema | undefi
           // leaf field
           const key = propName.toLowerCase();
           const arr = fieldIndex.get(key) ?? [];
-          arr.push({ toolSlug, defTitle: title ?? "", defTokens: titleTokens, isArrayItem });
+          arr.push({ toolSlug, defTitle: title ?? "", defTokens: titleTokens, isArrayItem, depth });
           fieldIndex.set(key, arr);
         }
         // some schemas nest object shape under anyOf/oneOf; handle shallowly
@@ -407,9 +413,14 @@ function inferEdges(tools: Tool[]): { edges: Edge[]; unresolved: UnresolvedParam
         // "event"), even though both contain "issue".
         const matchedCount = primaryMatch.length + descMatch.length;
         const extraTokens = Math.max(0, c.defTokens.size - matchedCount);
+        // A depth-2 field (e.g. Issue.number inside a list response's array) is
+        // normal. Anything deeper is usually an incidental sub-object shared
+        // across many unrelated tools (e.g. an Enterprise object only reachable
+        // via a GitHub-App owner reference) rather than the tool's intended output.
+        const depthPenalty = Math.max(0, c.depth - 2) * 0.6;
         return {
           c,
-          score: primaryMatch.length * 2 + descMatch.length - extraTokens * 0.25,
+          score: primaryMatch.length * 2 + descMatch.length - extraTokens * 0.25 - depthPenalty,
           groupKey: primaryMatch.length > 0 ? primaryMatch.sort().join(",") : descMatch.sort().join(","),
           isPrimary: primaryMatch.length > 0,
         };

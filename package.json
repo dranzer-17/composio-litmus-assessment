@@ -10,6 +10,7 @@
     "openai": "^6.48.0"
   },
   "devDependencies": {
+    "@types/node": "^26.6.2",
     "tsx": "^4.19.0"
   }
 }

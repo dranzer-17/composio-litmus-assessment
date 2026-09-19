@@ -6,3 +6,4 @@ dependency_graph.json
 .litmus/
 .claude/
 .github/hooks/
+CLAUDE.md

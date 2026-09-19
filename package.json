@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "generate": "node --import tsx src/generate.ts",
-    "selfcheck": "node --import tsx src/selfcheck.ts"
+    "selfcheck": "node --import tsx src/selfcheck.ts",
+    "eval": "node --import tsx src/eval.ts"
   },
   "dependencies": {
     "openai": "^6.48.0"

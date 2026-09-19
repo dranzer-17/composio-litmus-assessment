@@ -391,13 +391,22 @@ function inferEdges(tools: Tool[]): { edges: Edge[]; unresolved: UnresolvedParam
       // so it cannot be how you *got* issue_number in the first place. That's
       // circular. This is what surfaces the real precursor (e.g. a LIST/SEARCH tool
       // that needs no id at all) instead of a same-shaped GET tool.
-      const candidates: FieldOrigin[] = (fieldIndex.get(idParam.field) ?? []).filter(
-        (c) => c.toolSlug !== consumerSlug && !requiredParamsBySlug.get(c.toolSlug)?.has(paramName),
-      );
+      const notCircular = (c: FieldOrigin) =>
+        c.toolSlug !== consumerSlug && !requiredParamsBySlug.get(c.toolSlug)?.has(paramName);
+
+      // Some APIs name the output field exactly like the compound parameter itself
+      // (e.g. a GlobalSecurityAdvisory object has a literal "ghsa_id" property,
+      // not a generic "id" nested under a "Ghsa"-titled type). That's a stronger,
+      // unambiguous signal than the stem+suffix decomposition below, so try it first.
+      const exactCandidates: FieldOrigin[] = (fieldIndex.get(paramName.toLowerCase()) ?? []).filter(notCircular);
+
+      const candidates: FieldOrigin[] =
+        exactCandidates.length > 0 ? exactCandidates : (fieldIndex.get(idParam.field) ?? []).filter(notCircular);
       if (candidates.length === 0) {
         unresolved.push({ consumerSlug, param: idParam });
         continue;
       }
+      const isExactNameMatch = exactCandidates.length > 0;
 
       // Topical tokens (the resource stem + the param's own name) are the strong
       // signal; the free-text description is a weaker, secondary one (it can
@@ -405,26 +414,35 @@ function inferEdges(tools: Tool[]): { edges: Edge[]; unresolved: UnresolvedParam
       const primaryTokens = new Set<string>([...tokenSet(idParam.stem), ...tokenSet(idParam.name)]);
       const descTokens = tokenSet(description);
 
-      const scored: Scored[] = candidates.map((c) => {
-        const primaryMatch = [...primaryTokens].filter((t) => c.defTokens.has(t));
-        const descMatch = [...descTokens].filter((t) => c.defTokens.has(t) && !primaryTokens.has(t));
-        // Penalize defTitle tokens that matched nothing - e.g. "Issue" (0 extra
-        // tokens) is a tighter match for stem "issue" than "IssueEvent" (1 extra:
-        // "event"), even though both contain "issue".
-        const matchedCount = primaryMatch.length + descMatch.length;
-        const extraTokens = Math.max(0, c.defTokens.size - matchedCount);
-        // A depth-2 field (e.g. Issue.number inside a list response's array) is
-        // normal. Anything deeper is usually an incidental sub-object shared
-        // across many unrelated tools (e.g. an Enterprise object only reachable
-        // via a GitHub-App owner reference) rather than the tool's intended output.
-        const depthPenalty = Math.max(0, c.depth - 2) * 0.6;
-        return {
-          c,
-          score: primaryMatch.length * 2 + descMatch.length - extraTokens * 0.25 - depthPenalty,
-          groupKey: primaryMatch.length > 0 ? primaryMatch.sort().join(",") : descMatch.sort().join(","),
-          isPrimary: primaryMatch.length > 0,
-        };
-      });
+      const scored: Scored[] = isExactNameMatch
+        ? candidates.map((c) => ({
+            c,
+            // The output literally has a field named e.g. "ghsa_id" - no stem/type
+            // guessing needed, this is as strong a signal as schema matching gets.
+            score: 10 - Math.max(0, c.depth - 2) * 0.6,
+            groupKey: "exact",
+            isPrimary: true,
+          }))
+        : candidates.map((c) => {
+            const primaryMatch = [...primaryTokens].filter((t) => c.defTokens.has(t));
+            const descMatch = [...descTokens].filter((t) => c.defTokens.has(t) && !primaryTokens.has(t));
+            // Penalize defTitle tokens that matched nothing - e.g. "Issue" (0 extra
+            // tokens) is a tighter match for stem "issue" than "IssueEvent" (1 extra:
+            // "event"), even though both contain "issue".
+            const matchedCount = primaryMatch.length + descMatch.length;
+            const extraTokens = Math.max(0, c.defTokens.size - matchedCount);
+            // A depth-2 field (e.g. Issue.number inside a list response's array) is
+            // normal. Anything deeper is usually an incidental sub-object shared
+            // across many unrelated tools (e.g. an Enterprise object only reachable
+            // via a GitHub-App owner reference) rather than the tool's intended output.
+            const depthPenalty = Math.max(0, c.depth - 2) * 0.6;
+            return {
+              c,
+              score: primaryMatch.length * 2 + descMatch.length - extraTokens * 0.25 - depthPenalty,
+              groupKey: primaryMatch.length > 0 ? primaryMatch.sort().join(",") : descMatch.sort().join(","),
+              isPrimary: primaryMatch.length > 0,
+            };
+          });
 
       const distinctDefTitles = new Set(candidates.map((c) => c.defTitle));
       let chosen: Scored[] = scored.filter((s) => s.score > 0);
